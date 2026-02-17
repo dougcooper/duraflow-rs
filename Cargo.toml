@@ -1,0 +1,12 @@
+[package]
+name = "dagx-test"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dagx = "0.3.1"
+futures = "0.3.32"
+parking_lot = "0.12.5"
+serde = "1.0.228"
+serde_json = "1.0.149"
+tokio = { version = "1.49.0", features = ["full"] }

@@ -1,0 +1,7 @@
+{
+    "cSpell.enabled": false,
+    "chat.tools.terminal.autoApprove": {
+        "cargo build": true,
+        "true": true
+    }
+}
