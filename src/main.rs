@@ -9,6 +9,13 @@ use serde::{Serialize, de::DeserializeOwned};
 // 1. SHARED INFRASTRUCTURE
 // ============================================================================
 
+trait Storage: Send + Sync {
+    /// Return the raw JSON string stored for `key`, if any.
+    fn get_raw(&self, key: &str) -> Option<String>;
+    /// Store a raw JSON string for `key`.
+    fn save_raw(&self, key: &str, value: &str);
+}
+
 /// Mock database for persistence.
 struct Db {
     storage: Mutex<HashMap<String, String>>,
@@ -18,21 +25,21 @@ impl Db {
     fn new() -> Self {
         Self { storage: Mutex::new(HashMap::new()) }
     }
-    
-    fn get<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
-        let lock = self.storage.lock();
-        lock.get(key).and_then(|s| serde_json::from_str(s).ok())
+}
+
+impl Storage for Db {
+    fn get_raw(&self, key: &str) -> Option<String> {
+        self.storage.lock().get(key).cloned()
     }
-    
-    fn save<T: Serialize>(&self, key: &str, value: &T) {
-        let s = serde_json::to_string(value).unwrap();
-        self.storage.lock().insert(key.to_string(), s);
+
+    fn save_raw(&self, key: &str, value: &str) {
+        self.storage.lock().insert(key.to_string(), value.to_string());
     }
 }
 
 /// Shared context for progress and durability
 struct Context {
-    db: Arc<Db>,
+    db: Arc<dyn Storage + Send + Sync>,
     completed_count: Arc<AtomicUsize>,
 }
 
@@ -71,20 +78,23 @@ where
 
     async fn run(self, input: Self::Input) -> Self::Output {
         // 1. Check if result is already in the database
-        if let Some(cached) = self.ctx.db.get::<Self::Output>(&self.id) {
-            // Update progress even if we skip execution
-            let completed = self.ctx.completed_count.fetch_add(1, Ordering::SeqCst) + 1;
-            if let Some(cb) = &self.progress_handler {
-                cb(&self.id, completed);
+        if let Some(raw) = self.ctx.db.get_raw(&self.id) {
+            if let Ok(cached) = serde_json::from_str::<Self::Output>(&raw) {
+                // Update progress even if we skip execution
+                let completed = self.ctx.completed_count.fetch_add(1, Ordering::SeqCst) + 1;
+                if let Some(cb) = &self.progress_handler {
+                    cb(&self.id, completed);
+                }
+                return cached;
             }
-            return cached;
         }
 
         // 2. Execute the actual task logic
         let result = self.inner.run(input).await;
 
         // 3. Persist the result and increment progress
-        self.ctx.db.save(&self.id, &result);
+        let raw = serde_json::to_string(&result).unwrap();
+        self.ctx.db.save_raw(&self.id, &raw);
         let completed = self.ctx.completed_count.fetch_add(1, Ordering::SeqCst) + 1;
         if let Some(cb) = &self.progress_handler {
             cb(&self.id, completed);
@@ -103,19 +113,22 @@ where
         let inner = self.inner;
         async move {
             // 1. Return cached value if present (skip extraction/execution)
-            if let Some(cached) = ctx.db.get::<Self::Output>(&id) {
-                let completed = ctx.completed_count.fetch_add(1, Ordering::SeqCst) + 1;
-                if let Some(cb) = &progress {
-                    cb(&id, completed);
+            if let Some(raw) = ctx.db.get_raw(&id) {
+                if let Ok(cached) = serde_json::from_str::<Self::Output>(&raw) {
+                    let completed = ctx.completed_count.fetch_add(1, Ordering::SeqCst) + 1;
+                    if let Some(cb) = &progress {
+                        cb(&id, completed);
+                    }
+                    return Ok(cached);
                 }
-                return Ok(cached);
             }
 
             // 2. Delegate to the inner task's extraction + run
             let result = inner.extract_and_run(receivers).await?;
 
             // 3. Persist and update progress
-            ctx.db.save(&id, &result);
+            let raw = serde_json::to_string(&result).unwrap();
+            ctx.db.save_raw(&id, &raw);
             let completed = ctx.completed_count.fetch_add(1, Ordering::SeqCst) + 1;
             if let Some(cb) = &progress {
                 cb(&id, completed);
@@ -194,8 +207,9 @@ impl Multiply {
 #[tokio::main]
 async fn main() {
     let dag = DagRunner::new();
+    let db: Arc<dyn Storage + Send + Sync> = Arc::new(Db::new());
     let ctx = Arc::new(Context {
-        db: Arc::new(Db::new()),
+        db,
         completed_count: Arc::new(AtomicUsize::new(0)),
     });
     
