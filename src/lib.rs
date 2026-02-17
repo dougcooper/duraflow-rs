@@ -6,6 +6,37 @@ use serde::{Serialize, de::DeserializeOwned};
 mod store;
 pub use store::{Storage, MemoryStore, FileStore};
 
+/// Typed error for duraflow-rs operations
+#[derive(Debug)]
+pub enum DuraflowError {
+    Io(std::io::Error),
+    Serialize(serde_json::Error),
+    Persist { key: String, source: std::io::Error },
+    Other(String),
+}
+
+impl std::fmt::Display for DuraflowError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DuraflowError::Io(e) => write!(f, "io error: {}", e),
+            DuraflowError::Serialize(e) => write!(f, "serialize error: {}", e),
+            DuraflowError::Persist { key, source } => write!(f, "persist failed for {}: {}", key, source),
+            DuraflowError::Other(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+impl std::error::Error for DuraflowError {}
+
+impl From<std::io::Error> for DuraflowError {
+    fn from(e: std::io::Error) -> Self { DuraflowError::Io(e) }
+}
+
+impl From<serde_json::Error> for DuraflowError {
+    fn from(e: serde_json::Error) -> Self { DuraflowError::Serialize(e) }
+}
+
+
 /// Shared context for progress and durability
 pub struct Context {
     pub db: Arc<dyn Storage + Send + Sync>,
@@ -44,8 +75,8 @@ fn try_cached_and_mark<O: DeserializeOwned>(ctx: &Context, id: &str, cb: &Option
 }
 
 // Helper: persist value and mark completion
-fn persist_and_mark<O: Serialize>(ctx: &Context, id: &str, value: &O, cb: &Option<ProgressCb>) -> std::io::Result<()> {
-    ctx.save(id, value)?;
+fn persist_and_mark<O: Serialize>(ctx: &Context, id: &str, value: &O, cb: &Option<ProgressCb>) -> Result<(), DuraflowError> {
+    ctx.save(id, value).map_err(|e| DuraflowError::Persist { key: id.to_string(), source: e })?;
     let completed = ctx.completed_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
     if let Some(cb) = cb {
         cb(id, completed);
@@ -73,6 +104,31 @@ impl<Tk> Durable<Tk> {
         progress_handler: Option<Arc<dyn Fn(&str, usize) + Send + Sync + 'static>>,
     ) -> Self {
         Self { id: id.to_string(), ctx, inner, progress_handler }
+    }
+
+    /// Run the task but return a Result so callers can observe persistence errors.
+    pub fn run_result(self, input: Tk::Input) -> impl std::future::Future<Output = Result<Tk::Output, DuraflowError>> + Send
+    where
+        Tk: Task + Send + 'static,
+        Tk::Input: Send + Clone,
+        Tk::Output: Serialize + DeserializeOwned + Send + Sync + 'static,
+    {
+        async move {
+            // 1. Cached path
+            if let Some(cached) = try_cached_and_mark::<Tk::Output>(&self.ctx, &self.id, &self.progress_handler) {
+                return Ok(cached);
+            }
+
+            // 2. Run inner
+            let result = self.inner.run(input).await;
+
+            // 3. Persist — propagate typed error to caller
+            if let Err(e) = persist_and_mark(&self.ctx, &self.id, &result, &self.progress_handler) {
+                return Err(e);
+            }
+
+            Ok(result)
+        }
     }
 }
 
@@ -104,6 +160,7 @@ where
         }
     }
 
+
     fn extract_and_run(
         self,
         receivers: Vec<Box<dyn std::any::Any + Send>>,
@@ -122,9 +179,9 @@ where
             // 2. Delegate to inner extraction
             let result = inner.extract_and_run(receivers).await?;
 
-            // 3. Persist and update — propagate storage error to caller
+            // 3. Persist and update — propagate storage error to caller (map to string)
             if let Err(e) = persist_and_mark(&ctx, &id, &result, &progress) {
-                return Err(format!("persist failed for {}: {}", id, e));
+                return Err(e.to_string());
             }
 
             Ok(result)
