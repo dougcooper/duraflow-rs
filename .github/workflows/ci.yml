@@ -57,16 +57,16 @@ jobs:
         run: rustup show | sed -n '1,120p' || true
 
   msrv:
-    name: MSRV test (rust 1.65)
+    name: MSRV test (rust 1.71)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust (1.65.0)
+      - name: Install Rust (1.71.0)
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: 1.65.0
+          toolchain: 1.71.0
           override: true
 
       - name: Build & test (MSRV)
