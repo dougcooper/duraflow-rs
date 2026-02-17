@@ -45,11 +45,17 @@ struct Durable<Tk> {
     id: String,
     ctx: Arc<Context>,
     inner: Tk,
+    progress_handler: Option<Arc<dyn Fn(&str, usize) + Send + Sync + 'static>>,
 }
 
 impl<Tk> Durable<Tk> {
-    fn new(id: &str, ctx: Arc<Context>, inner: Tk) -> Self {
-        Self { id: id.to_string(), ctx, inner }
+    fn new(
+        id: &str,
+        ctx: Arc<Context>,
+        inner: Tk,
+        progress_handler: Option<Arc<dyn Fn(&str, usize) + Send + Sync + 'static>>,
+    ) -> Self {
+        Self { id: id.to_string(), ctx, inner, progress_handler }
     }
 }
 
@@ -67,7 +73,10 @@ where
         // 1. Check if result is already in the database
         if let Some(cached) = self.ctx.db.get::<Self::Output>(&self.id) {
             // Update progress even if we skip execution
-            self.ctx.completed_count.fetch_add(1, Ordering::SeqCst);
+            let completed = self.ctx.completed_count.fetch_add(1, Ordering::SeqCst) + 1;
+            if let Some(cb) = &self.progress_handler {
+                cb(&self.id, completed);
+            }
             return cached;
         }
 
@@ -76,7 +85,10 @@ where
 
         // 3. Persist the result and increment progress
         self.ctx.db.save(&self.id, &result);
-        self.ctx.completed_count.fetch_add(1, Ordering::SeqCst);
+        let completed = self.ctx.completed_count.fetch_add(1, Ordering::SeqCst) + 1;
+        if let Some(cb) = &self.progress_handler {
+            cb(&self.id, completed);
+        }
         
         result
     }
@@ -87,19 +99,27 @@ where
     ) -> impl Future<Output = Result<Self::Output, String>> + Send {
         let id = self.id.clone();
         let ctx = self.ctx.clone();
+        let progress = self.progress_handler.clone();
+        let inner = self.inner;
         async move {
             // 1. Return cached value if present (skip extraction/execution)
             if let Some(cached) = ctx.db.get::<Self::Output>(&id) {
-                ctx.completed_count.fetch_add(1, Ordering::SeqCst);
+                let completed = ctx.completed_count.fetch_add(1, Ordering::SeqCst) + 1;
+                if let Some(cb) = &progress {
+                    cb(&id, completed);
+                }
                 return Ok(cached);
             }
 
             // 2. Delegate to the inner task's extraction + run
-            let result = self.inner.extract_and_run(receivers).await?;
+            let result = inner.extract_and_run(receivers).await?;
 
             // 3. Persist and update progress
             ctx.db.save(&id, &result);
-            ctx.completed_count.fetch_add(1, Ordering::SeqCst);
+            let completed = ctx.completed_count.fetch_add(1, Ordering::SeqCst) + 1;
+            if let Some(cb) = &progress {
+                cb(&id, completed);
+            }
 
             Ok(result)
         }
@@ -113,11 +133,21 @@ where
 struct DurableDag<'a> {
     dag: &'a DagRunner,
     ctx: Arc<Context>,
+    progress_handler: Option<Arc<dyn Fn(&str, usize) + Send + Sync + 'static>>,
 }
 
 impl<'a> DurableDag<'a> {
     fn new(dag: &'a DagRunner, ctx: Arc<Context>) -> Self {
-        Self { dag, ctx }
+        Self { dag, ctx, progress_handler: None }
+    }
+
+    /// Attach a progress handler that will be called with (task_id, completed_count)
+    fn with_progress<F>(mut self, handler: F) -> Self
+    where
+        F: Fn(&str, usize) + Send + Sync + 'static,
+    {
+        self.progress_handler = Some(Arc::new(handler));
+        self
     }
 
     /// Adds a durable task and returns a standard TaskBuilder.
@@ -128,7 +158,12 @@ impl<'a> DurableDag<'a> {
         Tk::Input: Clone + 'static,
         Tk::Output: Serialize + DeserializeOwned + Send + Sync + Clone + 'static,
     {
-        let durable_wrapper = Durable::new(id, self.ctx.clone(), task);
+        let durable_wrapper = Durable::new(
+            id,
+            self.ctx.clone(),
+            task,
+            self.progress_handler.clone(),
+        );
         self.dag.add_task(durable_wrapper)
     }
 }
@@ -164,7 +199,9 @@ async fn main() {
         completed_count: Arc::new(AtomicUsize::new(0)),
     });
     
-    let d_dag = DurableDag::new(&dag, ctx.clone());
+    let d_dag = DurableDag::new(&dag, ctx.clone()).with_progress(|id, completed| {
+        println!("progress: task={} completed_count={}", id, completed);
+    });
 
     // 1. Source tasks (0 dependencies)
     let val1 = d_dag.add("v1", LoadValue(10));
@@ -191,7 +228,9 @@ async fn main() {
     // --- Resumption Simulation ---
     println!("\nRestarting DAG...");
     let dag2 = DagRunner::new();
-    let d_dag2 = DurableDag::new(&dag2, ctx.clone());
+    let d_dag2 = DurableDag::new(&dag2, ctx.clone()).with_progress(|id, completed| {
+        println!("(resumed) progress: task={} completed_count={}", id, completed);
+    });
     
     // We recreate the same structure
     let v1 = d_dag2.add("v1", LoadValue(10));
