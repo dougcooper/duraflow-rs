@@ -45,3 +45,19 @@ Run tests:
 ```bash
 cargo test
 ```
+
+CI & publishing
+
+- A GitHub Actions workflow runs on push/PR to `main` (build + test + fmt check): `.github/workflows/ci.yml`.
+- To publish to crates.io create a repository secret named `CRATES_IO_TOKEN` (your crates.io API token) and either:
+  1. Push a tag like `v0.1.1` (the `publish` workflow will run on `refs/tags/v*`), or
+  2. Use the repository's "Actions" tab and trigger the `Publish crate` workflow manually (workflow_dispatch).
+
+Example: create a tag and push
+
+```bash
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+The `publish` workflow will run tests and then call `cargo publish` using the `CRATES_IO_TOKEN` secret.
