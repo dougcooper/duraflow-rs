@@ -1,27 +1,37 @@
-use duraflow_rs::{Durable, Context, MemoryStore, Storage};
-use dagx::{task, Task};
+use dagx::{Task, task};
+use duraflow_rs::{Context, Durable, MemoryStore, Storage};
+use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
-use parking_lot::Mutex;
 
 // Failing store for tests
 struct FailingStore;
 impl Storage for FailingStore {
-    fn get_raw(&self, _key: &str) -> Option<String> { None }
+    fn get_raw(&self, _key: &str) -> Option<String> {
+        None
+    }
     fn save_raw(&self, _key: &str, _value: &str) -> std::io::Result<()> {
-        Err(std::io::Error::new(std::io::ErrorKind::Other, "simulated write failure"))
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "simulated write failure",
+        ))
     }
 }
 
 struct Const42;
 #[task]
 impl Const42 {
-    async fn run(&self) -> i32 { 42 }
+    async fn run(&self) -> i32 {
+        42
+    }
 }
 
 #[tokio::test]
 async fn extract_and_run_propagates_persist_error() {
-    let ctx = Arc::new(Context { db: Arc::new(FailingStore), completed_count: Arc::new(AtomicUsize::new(0)) });
+    let ctx = Arc::new(Context {
+        db: Arc::new(FailingStore),
+        completed_count: Arc::new(AtomicUsize::new(0)),
+    });
     let durable = Durable::new("t1", ctx.clone(), Const42, None);
 
     let res = durable.extract_and_run(vec![]).await;
@@ -31,7 +41,10 @@ async fn extract_and_run_propagates_persist_error() {
 
 #[tokio::test]
 async fn run_result_propagates_persist_error() {
-    let ctx = Arc::new(Context { db: Arc::new(FailingStore), completed_count: Arc::new(AtomicUsize::new(0)) });
+    let ctx = Arc::new(Context {
+        db: Arc::new(FailingStore),
+        completed_count: Arc::new(AtomicUsize::new(0)),
+    });
     let durable = Durable::new("t2", ctx.clone(), Const42, None);
 
     let res = durable.run_result(()).await;
@@ -45,7 +58,10 @@ async fn run_result_propagates_persist_error() {
 #[tokio::test]
 async fn persist_and_cache_work_and_progress_called() {
     let db = MemoryStore::new();
-    let ctx = Arc::new(Context { db: Arc::new(db), completed_count: Arc::new(AtomicUsize::new(0)) });
+    let ctx = Arc::new(Context {
+        db: Arc::new(db),
+        completed_count: Arc::new(AtomicUsize::new(0)),
+    });
 
     let progress_calls = Arc::new(Mutex::new(Vec::new()));
     let progress_clone = progress_calls.clone();

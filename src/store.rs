@@ -1,7 +1,7 @@
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 /// Object-safe storage backend used by `duraflow-rs`.
 pub trait Storage: Send + Sync {
@@ -18,7 +18,9 @@ pub struct MemoryStore {
 
 impl MemoryStore {
     pub fn new() -> Self {
-        Self { storage: Mutex::new(HashMap::new()) }
+        Self {
+            storage: Mutex::new(HashMap::new()),
+        }
     }
 }
 
@@ -28,7 +30,9 @@ impl Storage for MemoryStore {
     }
 
     fn save_raw(&self, key: &str, value: &str) -> std::io::Result<()> {
-        self.storage.lock().insert(key.to_string(), value.to_string());
+        self.storage
+            .lock()
+            .insert(key.to_string(), value.to_string());
         Ok(())
     }
 }
@@ -45,13 +49,22 @@ impl FileStore {
     pub fn new<P: AsRef<Path>>(dir: P) -> std::io::Result<Self> {
         let dir = dir.as_ref().to_path_buf();
         fs::create_dir_all(&dir)?;
-        Ok(Self { dir, write_lock: Mutex::new(()) })
+        Ok(Self {
+            dir,
+            write_lock: Mutex::new(()),
+        })
     }
 
     fn key_path(&self, key: &str) -> PathBuf {
         let safe: String = key
             .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
         self.dir.join(safe)
     }

@@ -29,14 +29,13 @@
 //! }
 //! ```
 
-
-use dagx::{Task, TaskBuilder, DagRunner, Pending};
+use dagx::{DagRunner, Pending, Task, TaskBuilder};
+use serde::{Serialize, de::DeserializeOwned};
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
-use serde::{Serialize, de::DeserializeOwned};
 
 mod store;
-pub use store::{Storage, MemoryStore, FileStore};
+pub use store::{FileStore, MemoryStore, Storage};
 
 /// Typed error for duraflow-rs operations
 #[derive(Debug)]
@@ -52,7 +51,9 @@ impl std::fmt::Display for DuraflowError {
         match self {
             DuraflowError::Io(e) => write!(f, "io error: {}", e),
             DuraflowError::Serialize(e) => write!(f, "serialize error: {}", e),
-            DuraflowError::Persist { key, source } => write!(f, "persist failed for {}: {}", key, source),
+            DuraflowError::Persist { key, source } => {
+                write!(f, "persist failed for {}: {}", key, source)
+            }
             DuraflowError::Other(s) => write!(f, "{}", s),
         }
     }
@@ -61,13 +62,16 @@ impl std::fmt::Display for DuraflowError {
 impl std::error::Error for DuraflowError {}
 
 impl From<std::io::Error> for DuraflowError {
-    fn from(e: std::io::Error) -> Self { DuraflowError::Io(e) }
+    fn from(e: std::io::Error) -> Self {
+        DuraflowError::Io(e)
+    }
 }
 
 impl From<serde_json::Error> for DuraflowError {
-    fn from(e: serde_json::Error) -> Self { DuraflowError::Serialize(e) }
+    fn from(e: serde_json::Error) -> Self {
+        DuraflowError::Serialize(e)
+    }
 }
-
 
 /// Shared context for progress and durability
 pub struct Context {
@@ -78,7 +82,9 @@ pub struct Context {
 impl Context {
     /// Typed helper: deserialize stored JSON into T
     pub fn get<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
-        self.db.get_raw(key).and_then(|s| serde_json::from_str(&s).ok())
+        self.db
+            .get_raw(key)
+            .and_then(|s| serde_json::from_str(&s).ok())
     }
 
     /// Typed helper: serialize value and persist as JSON
@@ -95,9 +101,16 @@ impl Context {
 type ProgressCb = Arc<dyn Fn(&str, usize) + Send + Sync + 'static>;
 
 // Helper: check cache and mark completion if present
-fn try_cached_and_mark<O: DeserializeOwned>(ctx: &Context, id: &str, cb: &Option<ProgressCb>) -> Option<O> {
+fn try_cached_and_mark<O: DeserializeOwned>(
+    ctx: &Context,
+    id: &str,
+    cb: &Option<ProgressCb>,
+) -> Option<O> {
     if let Some(v) = ctx.get::<O>(id) {
-        let completed = ctx.completed_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        let completed = ctx
+            .completed_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
         if let Some(cb) = cb {
             cb(id, completed);
         }
@@ -107,9 +120,20 @@ fn try_cached_and_mark<O: DeserializeOwned>(ctx: &Context, id: &str, cb: &Option
 }
 
 // Helper: persist value and mark completion
-fn persist_and_mark<O: Serialize>(ctx: &Context, id: &str, value: &O, cb: &Option<ProgressCb>) -> Result<(), DuraflowError> {
-    ctx.save(id, value).map_err(|e| DuraflowError::Persist { key: id.to_string(), source: e })?;
-    let completed = ctx.completed_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+fn persist_and_mark<O: Serialize>(
+    ctx: &Context,
+    id: &str,
+    value: &O,
+    cb: &Option<ProgressCb>,
+) -> Result<(), DuraflowError> {
+    ctx.save(id, value).map_err(|e| DuraflowError::Persist {
+        key: id.to_string(),
+        source: e,
+    })?;
+    let completed = ctx
+        .completed_count
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        + 1;
     if let Some(cb) = cb {
         cb(id, completed);
     }
@@ -135,11 +159,19 @@ impl<Tk> Durable<Tk> {
         inner: Tk,
         progress_handler: Option<Arc<dyn Fn(&str, usize) + Send + Sync + 'static>>,
     ) -> Self {
-        Self { id: id.to_string(), ctx, inner, progress_handler }
+        Self {
+            id: id.to_string(),
+            ctx,
+            inner,
+            progress_handler,
+        }
     }
 
     /// Run the task but return a Result so callers can observe persistence errors.
-    pub fn run_result(self, input: Tk::Input) -> impl std::future::Future<Output = Result<Tk::Output, DuraflowError>> + Send
+    pub fn run_result(
+        self,
+        input: Tk::Input,
+    ) -> impl std::future::Future<Output = Result<Tk::Output, DuraflowError>> + Send
     where
         Tk: Task + Send + 'static,
         Tk::Input: Send + Clone,
@@ -147,7 +179,9 @@ impl<Tk> Durable<Tk> {
     {
         async move {
             // 1. Cached path
-            if let Some(cached) = try_cached_and_mark::<Tk::Output>(&self.ctx, &self.id, &self.progress_handler) {
+            if let Some(cached) =
+                try_cached_and_mark::<Tk::Output>(&self.ctx, &self.id, &self.progress_handler)
+            {
                 return Ok(cached);
             }
 
@@ -176,7 +210,9 @@ where
     fn run(self, input: Self::Input) -> impl std::future::Future<Output = Self::Output> + Send {
         async move {
             // 1. Check cache (DRY via helper)
-            if let Some(cached) = try_cached_and_mark::<Self::Output>(&self.ctx, &self.id, &self.progress_handler) {
+            if let Some(cached) =
+                try_cached_and_mark::<Self::Output>(&self.ctx, &self.id, &self.progress_handler)
+            {
                 return cached;
             }
 
@@ -191,7 +227,6 @@ where
             result
         }
     }
-
 
     fn extract_and_run(
         self,
@@ -233,7 +268,11 @@ pub struct DurableDag<'a> {
 
 impl<'a> DurableDag<'a> {
     pub fn new(dag: &'a DagRunner, ctx: Arc<Context>) -> Self {
-        Self { dag, ctx, progress_handler: None }
+        Self {
+            dag,
+            ctx,
+            progress_handler: None,
+        }
     }
 
     /// Attach a progress handler that will be called with (task_id, completed_count)
@@ -253,12 +292,8 @@ impl<'a> DurableDag<'a> {
         Tk::Input: Clone + 'static,
         Tk::Output: Serialize + DeserializeOwned + Send + Sync + Clone + 'static,
     {
-        let durable_wrapper = Durable::new(
-            id,
-            self.ctx.clone(),
-            task,
-            self.progress_handler.clone(),
-        );
+        let durable_wrapper =
+            Durable::new(id, self.ctx.clone(), task, self.progress_handler.clone());
         self.dag.add_task(durable_wrapper)
     }
 }
