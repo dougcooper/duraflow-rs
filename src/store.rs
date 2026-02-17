@@ -24,6 +24,12 @@ impl MemoryStore {
     }
 }
 
+impl Default for MemoryStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Storage for MemoryStore {
     fn get_raw(&self, key: &str) -> Option<String> {
         self.storage.lock().get(key).cloned()

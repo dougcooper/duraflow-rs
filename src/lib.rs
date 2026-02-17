@@ -91,7 +91,7 @@ impl Context {
     /// Returns an io::Error if serialization or storage fails.
     pub fn save<T: Serialize>(&self, key: &str, value: &T) -> std::io::Result<()> {
         let s = serde_json::to_string(value).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::Other, format!("serialize error: {}", e))
+            std::io::Error::other(format!("serialize error: {}", e))
         })?;
         self.db.save_raw(key, &s)
     }
@@ -149,7 +149,7 @@ pub struct Durable<Tk> {
     id: String,
     ctx: Arc<Context>,
     inner: Tk,
-    progress_handler: Option<Arc<dyn Fn(&str, usize) + Send + Sync + 'static>>,
+    progress_handler: Option<ProgressCb>,
 }
 
 impl<Tk> Durable<Tk> {
@@ -157,7 +157,7 @@ impl<Tk> Durable<Tk> {
         id: &str,
         ctx: Arc<Context>,
         inner: Tk,
-        progress_handler: Option<Arc<dyn Fn(&str, usize) + Send + Sync + 'static>>,
+        progress_handler: Option<ProgressCb>,
     ) -> Self {
         Self {
             id: id.to_string(),
@@ -168,33 +168,29 @@ impl<Tk> Durable<Tk> {
     }
 
     /// Run the task but return a Result so callers can observe persistence errors.
-    pub fn run_result(
+    pub async fn run_result(
         self,
         input: Tk::Input,
-    ) -> impl std::future::Future<Output = Result<Tk::Output, DuraflowError>> + Send
+    ) -> Result<Tk::Output, DuraflowError>
     where
         Tk: Task + Send + 'static,
         Tk::Input: Send + Clone,
         Tk::Output: Serialize + DeserializeOwned + Send + Sync + 'static,
     {
-        async move {
-            // 1. Cached path
-            if let Some(cached) =
-                try_cached_and_mark::<Tk::Output>(&self.ctx, &self.id, &self.progress_handler)
-            {
-                return Ok(cached);
-            }
-
-            // 2. Run inner
-            let result = self.inner.run(input).await;
-
-            // 3. Persist — propagate typed error to caller
-            if let Err(e) = persist_and_mark(&self.ctx, &self.id, &result, &self.progress_handler) {
-                return Err(e);
-            }
-
-            Ok(result)
+        // 1. Cached path
+        if let Some(cached) =
+            try_cached_and_mark::<Tk::Output>(&self.ctx, &self.id, &self.progress_handler)
+        {
+            return Ok(cached);
         }
+
+        // 2. Run inner
+        let result = self.inner.run(input).await;
+
+        // 3. Persist — propagate typed error to caller
+        persist_and_mark(&self.ctx, &self.id, &result, &self.progress_handler)?;
+
+        Ok(result)
     }
 }
 
@@ -207,6 +203,7 @@ where
     type Input = Tk::Input;
     type Output = Tk::Output;
 
+    #[allow(clippy::manual_async_fn)]
     fn run(self, input: Self::Input) -> impl std::future::Future<Output = Self::Output> + Send {
         async move {
             // 1. Check cache (DRY via helper)
@@ -263,7 +260,7 @@ where
 pub struct DurableDag<'a> {
     pub dag: &'a DagRunner,
     pub ctx: Arc<Context>,
-    pub progress_handler: Option<Arc<dyn Fn(&str, usize) + Send + Sync + 'static>>,
+    pub progress_handler: Option<ProgressCb>,
 }
 
 impl<'a> DurableDag<'a> {
