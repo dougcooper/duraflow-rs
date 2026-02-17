@@ -3,7 +3,7 @@ name = "duraflow-rs"
 version = "1.0.0"
 edition = "2021"
 # Minimum supported Rust version (MSRV)
-rust-version = "1.71"
+rust-version = "1.81"
 
 [dependencies]
 dagx = "0.3.1"

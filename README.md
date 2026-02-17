@@ -51,7 +51,7 @@ cargo test
 CI & publishing
 
 - A GitHub Actions workflow runs on push/PR to `main` (build + test + fmt check): `.github/workflows/ci.yml`.
-- This CI also runs an MSRV job (Rust 1.71) to ensure backward compatibility.
+- This CI also runs an MSRV job (Rust 1.81) to ensure backward compatibility.
 - To publish to crates.io create a repository secret named `CRATES_IO_TOKEN` (your crates.io API token) and either:
   1. Push a tag like `v1.0.0` (the `publish` workflow will run on `refs/tags/v*`), or
   2. Use the repository's "Actions" tab and trigger the `Publish crate` workflow manually (workflow_dispatch).
