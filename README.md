@@ -63,3 +63,21 @@ git push origin v0.1.1
 ```
 
 The `publish` workflow will run tests and then call `cargo publish` using the `CRATES_IO_TOKEN` secret.
+
+Enable local git hooks (pre-commit)
+
+- This repository provides a pre-commit hook that runs `cargo fmt -- --check` and `cargo clippy --all -- -D warnings`.
+- To enable the hook locally run:
+
+```bash
+scripts/install-hooks.sh
+# or: git config core.hooksPath .githooks
+```
+
+- To bypass the hook for a single commit set `SKIP_HOOKS=1`, e.g.:
+
+```bash
+SKIP_HOOKS=1 git commit -m "skip hooks"
+```
+
+Note: Git hooks are a local setting (not enabled automatically for new clones); run the installer after cloning to activate them.

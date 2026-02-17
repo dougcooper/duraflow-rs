@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Repo-managed pre-commit hook — runs formatter and clippy.
+# To bypass one commit use: SKIP_HOOKS=1 git commit -m "..."
+
+if [ -n "${SKIP_HOOKS:-}" ]; then
+  echo "SKIP_HOOKS set — skipping pre-commit checks"
+  exit 0
+fi
+
+echo "⏱  running pre-commit checks: cargo fmt -- --check && cargo clippy --all -- -D warnings"
+
+# check formatting
+cargo fmt -- --check
+
+# run clippy (fail on warnings to keep quality high)
+cargo clippy --all -- -D warnings
+
+echo "✅ pre-commit checks passed"
