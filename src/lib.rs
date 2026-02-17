@@ -1,3 +1,35 @@
+//! duraflow-rs — durable, resumable dag tasks built on top of `dagx`
+//!
+//! High level features:
+//! - Durable task decorator that persists task outputs to a `Storage` backend
+//! - `run_result` API for callers to observe persistence errors without changing `Task::run`
+//! - Built-in `MemoryStore` and `FileStore` backends
+//!
+//! Example (simple):
+//!
+//! ```no_run
+//! #[tokio::main]
+//! async fn main() {
+//!     use duraflow_rs::{DurableDag, Context, MemoryStore};
+//!     use dagx::{DagRunner, task, Task};
+//!     use std::sync::{Arc, atomic::AtomicUsize};
+//!
+//!     // define a task
+//!     struct Load(i32);
+//!     #[task]
+//!     impl Load { async fn run(&self) -> i32 { self.0 } }
+//!
+//!     let dag = DagRunner::new();
+//!     let db = Arc::new(MemoryStore::new());
+//!     let ctx = Arc::new(Context { db, completed_count: Arc::new(AtomicUsize::new(0)) });
+//!     let d = DurableDag::new(&dag, ctx.clone());
+//!     let a = d.add("v1", Load(5));
+//!     dag.run(|f| { tokio::spawn(f); }).await.unwrap();
+//!     assert_eq!(dag.get(a).unwrap(), 5);
+//! }
+//! ```
+
+
 use dagx::{Task, TaskBuilder, DagRunner, Pending};
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
