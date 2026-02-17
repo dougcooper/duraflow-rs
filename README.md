@@ -51,18 +51,25 @@ cargo test
 CI & publishing
 
 - A GitHub Actions workflow runs on push/PR to `main` (build + test + fmt check): `.github/workflows/ci.yml`.
+- This CI also runs an MSRV job (Rust 1.65) to ensure backward compatibility.
 - To publish to crates.io create a repository secret named `CRATES_IO_TOKEN` (your crates.io API token) and either:
-  1. Push a tag like `v0.1.1` (the `publish` workflow will run on `refs/tags/v*`), or
+  1. Push a tag like `v1.0.0` (the `publish` workflow will run on `refs/tags/v*`), or
   2. Use the repository's "Actions" tab and trigger the `Publish crate` workflow manually (workflow_dispatch).
 
 Example: create a tag and push
 
 ```bash
-git tag v0.1.1
-git push origin v0.1.1
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
 The `publish` workflow will run tests and then call `cargo publish` using the `CRATES_IO_TOKEN` secret.
+
+MSRV (minimum supported Rust version)
+
+- Declared in `Cargo.toml`: `rust-version = "1.65"`.
+- The CI `msrv` job verifies the crate builds/tests on Rust 1.65.
+- If you need to raise/lower the MSRV, update `rust-version` and adjust the CI job accordingly.
 
 Enable local git hooks (pre-commit)
 

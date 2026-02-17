@@ -1,7 +1,8 @@
 [package]
 name = "duraflow-rs"
-version = "0.1.1"
-edition = "2024"
+version = "1.0.0"
+edition = "2024"# Minimum supported Rust version (MSRV)
+rust-version = "1.65"
 
 [dependencies]
 dagx = "0.3.1"
