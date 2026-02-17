@@ -90,9 +90,8 @@ impl Context {
     /// Typed helper: serialize value and persist as JSON
     /// Returns an io::Error if serialization or storage fails.
     pub fn save<T: Serialize>(&self, key: &str, value: &T) -> std::io::Result<()> {
-        let s = serde_json::to_string(value).map_err(|e| {
-            std::io::Error::other(format!("serialize error: {}", e))
-        })?;
+        let s = serde_json::to_string(value)
+            .map_err(|e| std::io::Error::other(format!("serialize error: {}", e)))?;
         self.db.save_raw(key, &s)
     }
 }
@@ -168,10 +167,7 @@ impl<Tk> Durable<Tk> {
     }
 
     /// Run the task but return a Result so callers can observe persistence errors.
-    pub async fn run_result(
-        self,
-        input: Tk::Input,
-    ) -> Result<Tk::Output, DuraflowError>
+    pub async fn run_result(self, input: Tk::Input) -> Result<Tk::Output, DuraflowError>
     where
         Tk: Task + Send + 'static,
         Tk::Input: Send + Clone,
