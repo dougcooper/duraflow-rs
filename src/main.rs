@@ -43,6 +43,19 @@ struct Context {
     completed_count: Arc<AtomicUsize>,
 }
 
+impl Context {
+    /// Typed helper: deserialize stored JSON into T
+    fn get<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
+        self.db.get_raw(key).and_then(|s| serde_json::from_str(&s).ok())
+    }
+
+    /// Typed helper: serialize value and persist as JSON
+    fn save<T: Serialize>(&self, key: &str, value: &T) {
+        let s = serde_json::to_string(value).unwrap();
+        self.db.save_raw(key, &s);
+    }
+}
+
 // ============================================================================
 // 2. THE GENERALIZED DECORATOR
 // ============================================================================
@@ -78,23 +91,20 @@ where
 
     async fn run(self, input: Self::Input) -> Self::Output {
         // 1. Check if result is already in the database
-        if let Some(raw) = self.ctx.db.get_raw(&self.id) {
-            if let Ok(cached) = serde_json::from_str::<Self::Output>(&raw) {
-                // Update progress even if we skip execution
-                let completed = self.ctx.completed_count.fetch_add(1, Ordering::SeqCst) + 1;
-                if let Some(cb) = &self.progress_handler {
-                    cb(&self.id, completed);
-                }
-                return cached;
+        if let Some(cached) = self.ctx.get::<Self::Output>(&self.id) {
+            // Update progress even if we skip execution
+            let completed = self.ctx.completed_count.fetch_add(1, Ordering::SeqCst) + 1;
+            if let Some(cb) = &self.progress_handler {
+                cb(&self.id, completed);
             }
+            return cached;
         }
 
         // 2. Execute the actual task logic
         let result = self.inner.run(input).await;
 
         // 3. Persist the result and increment progress
-        let raw = serde_json::to_string(&result).unwrap();
-        self.ctx.db.save_raw(&self.id, &raw);
+        self.ctx.save(&self.id, &result);
         let completed = self.ctx.completed_count.fetch_add(1, Ordering::SeqCst) + 1;
         if let Some(cb) = &self.progress_handler {
             cb(&self.id, completed);
@@ -113,22 +123,19 @@ where
         let inner = self.inner;
         async move {
             // 1. Return cached value if present (skip extraction/execution)
-            if let Some(raw) = ctx.db.get_raw(&id) {
-                if let Ok(cached) = serde_json::from_str::<Self::Output>(&raw) {
-                    let completed = ctx.completed_count.fetch_add(1, Ordering::SeqCst) + 1;
-                    if let Some(cb) = &progress {
-                        cb(&id, completed);
-                    }
-                    return Ok(cached);
+            if let Some(cached) = ctx.get::<Self::Output>(&id) {
+                let completed = ctx.completed_count.fetch_add(1, Ordering::SeqCst) + 1;
+                if let Some(cb) = &progress {
+                    cb(&id, completed);
                 }
+                return Ok(cached);
             }
 
             // 2. Delegate to the inner task's extraction + run
             let result = inner.extract_and_run(receivers).await?;
 
             // 3. Persist and update progress
-            let raw = serde_json::to_string(&result).unwrap();
-            ctx.db.save_raw(&id, &raw);
+            ctx.save(&id, &result);
             let completed = ctx.completed_count.fetch_add(1, Ordering::SeqCst) + 1;
             if let Some(cb) = &progress {
                 cb(&id, completed);
