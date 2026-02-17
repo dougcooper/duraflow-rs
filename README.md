@@ -1,5 +1,7 @@
 # duraflow-rs
 
+[![CI](https://github.com/dougcooper/duraflow-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/dougcooper/duraflow-rs/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/duraflow-rs.svg)](https://crates.io/crates/duraflow-rs) [![docs.rs](https://docs.rs/duraflow-rs/badge.svg)](https://docs.rs/duraflow-rs)
+
 Duraflow is a small helper library built on top of `dagx` that adds durability (persistence + resumption) and progress callbacks for DAG tasks.
 
 Features
