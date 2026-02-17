@@ -1,0 +1,175 @@
+use dagx::{Task, TaskBuilder, DagRunner, Pending};
+use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+use serde::{Serialize, de::DeserializeOwned};
+
+mod store;
+pub use store::{Storage, MemoryStore, FileStore};
+
+/// Shared context for progress and durability
+pub struct Context {
+    pub db: Arc<dyn Storage + Send + Sync>,
+    pub completed_count: Arc<AtomicUsize>,
+}
+
+impl Context {
+    /// Typed helper: deserialize stored JSON into T
+    pub fn get<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
+        self.db.get_raw(key).and_then(|s| serde_json::from_str(&s).ok())
+    }
+
+    /// Typed helper: serialize value and persist as JSON
+    /// Returns an io::Error if serialization or storage fails.
+    pub fn save<T: Serialize>(&self, key: &str, value: &T) -> std::io::Result<()> {
+        let s = serde_json::to_string(value).map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::Other, format!("serialize error: {}", e))
+        })?;
+        self.db.save_raw(key, &s)
+    }
+}
+
+// Internal progress callback shorthand
+type ProgressCb = Arc<dyn Fn(&str, usize) + Send + Sync + 'static>;
+
+// Helper: check cache and mark completion if present
+fn try_cached_and_mark<O: DeserializeOwned>(ctx: &Context, id: &str, cb: &Option<ProgressCb>) -> Option<O> {
+    if let Some(v) = ctx.get::<O>(id) {
+        let completed = ctx.completed_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        if let Some(cb) = cb {
+            cb(id, completed);
+        }
+        return Some(v);
+    }
+    None
+}
+
+// Helper: persist value and mark completion
+fn persist_and_mark<O: Serialize>(ctx: &Context, id: &str, value: &O, cb: &Option<ProgressCb>) -> std::io::Result<()> {
+    ctx.save(id, value)?;
+    let completed = ctx.completed_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    if let Some(cb) = cb {
+        cb(id, completed);
+    }
+    Ok(())
+}
+
+// -----------------------------------------------------------------------------
+// Durable decorator
+// -----------------------------------------------------------------------------
+
+/// The "Durable" decorator wraps any Task implementation and persists outputs.
+pub struct Durable<Tk> {
+    id: String,
+    ctx: Arc<Context>,
+    inner: Tk,
+    progress_handler: Option<Arc<dyn Fn(&str, usize) + Send + Sync + 'static>>,
+}
+
+impl<Tk> Durable<Tk> {
+    pub fn new(
+        id: &str,
+        ctx: Arc<Context>,
+        inner: Tk,
+        progress_handler: Option<Arc<dyn Fn(&str, usize) + Send + Sync + 'static>>,
+    ) -> Self {
+        Self { id: id.to_string(), ctx, inner, progress_handler }
+    }
+}
+
+impl<Tk> Task for Durable<Tk>
+where
+    Tk: Task + Send + 'static,
+    Tk::Input: Send + Clone,
+    Tk::Output: Serialize + DeserializeOwned + Send + Sync + 'static,
+{
+    type Input = Tk::Input;
+    type Output = Tk::Output;
+
+    fn run(self, input: Self::Input) -> impl std::future::Future<Output = Self::Output> + Send {
+        async move {
+            // 1. Check cache (DRY via helper)
+            if let Some(cached) = try_cached_and_mark::<Self::Output>(&self.ctx, &self.id, &self.progress_handler) {
+                return cached;
+            }
+
+            // 2. Run inner task
+            let result = self.inner.run(input).await;
+
+            // 3. Persist + progress — do not panic, log on failure
+            if let Err(e) = persist_and_mark(&self.ctx, &self.id, &result, &self.progress_handler) {
+                eprintln!("persist failed for {}: {}", self.id, e);
+            }
+
+            result
+        }
+    }
+
+    fn extract_and_run(
+        self,
+        receivers: Vec<Box<dyn std::any::Any + Send>>,
+    ) -> impl std::future::Future<Output = Result<Self::Output, String>> + Send {
+        let id = self.id.clone();
+        let ctx = self.ctx.clone();
+        let progress = self.progress_handler.clone();
+        let inner = self.inner;
+
+        async move {
+            // 1. Cached path (DRY via helper)
+            if let Some(cached) = try_cached_and_mark::<Self::Output>(&ctx, &id, &progress) {
+                return Ok(cached);
+            }
+
+            // 2. Delegate to inner extraction
+            let result = inner.extract_and_run(receivers).await?;
+
+            // 3. Persist and update — propagate storage error to caller
+            if let Err(e) = persist_and_mark(&ctx, &id, &result, &progress) {
+                return Err(format!("persist failed for {}: {}", id, e));
+            }
+
+            Ok(result)
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// DurableDag builder wrapper
+// -----------------------------------------------------------------------------
+
+pub struct DurableDag<'a> {
+    pub dag: &'a DagRunner,
+    pub ctx: Arc<Context>,
+    pub progress_handler: Option<Arc<dyn Fn(&str, usize) + Send + Sync + 'static>>,
+}
+
+impl<'a> DurableDag<'a> {
+    pub fn new(dag: &'a DagRunner, ctx: Arc<Context>) -> Self {
+        Self { dag, ctx, progress_handler: None }
+    }
+
+    /// Attach a progress handler that will be called with (task_id, completed_count)
+    pub fn with_progress<F>(mut self, handler: F) -> Self
+    where
+        F: Fn(&str, usize) + Send + Sync + 'static,
+    {
+        self.progress_handler = Some(Arc::new(handler));
+        self
+    }
+
+    /// Adds a durable task and returns a standard TaskBuilder.
+    /// This allows you to chain .depends_on() just like normal dagx.
+    pub fn add<Tk>(&self, id: &str, task: Tk) -> TaskBuilder<'_, Durable<Tk>, Pending>
+    where
+        Tk: Task + Sync + 'static,
+        Tk::Input: Clone + 'static,
+        Tk::Output: Serialize + DeserializeOwned + Send + Sync + Clone + 'static,
+    {
+        let durable_wrapper = Durable::new(
+            id,
+            self.ctx.clone(),
+            task,
+            self.progress_handler.clone(),
+        );
+        self.dag.add_task(durable_wrapper)
+    }
+}
