@@ -5,6 +5,7 @@
         "true": true,
         "cargo test": true,
         "git add": true,
-        "git commit": true
+        "git commit": true,
+        "cargo clippy": true
     }
 }
