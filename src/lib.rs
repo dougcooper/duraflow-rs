@@ -30,9 +30,9 @@
 //! ```
 
 use dagx::{DagRunner, Pending, Task, TaskBuilder};
-use serde::{Serialize, de::DeserializeOwned};
-use std::sync::Arc;
+use serde::{de::DeserializeOwned, Serialize};
 use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 
 mod store;
 pub use store::{FileStore, MemoryStore, Storage};

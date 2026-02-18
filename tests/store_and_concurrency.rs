@@ -1,4 +1,4 @@
-use dagx::{Task, task};
+use dagx::{task, Task};
 use duraflow_rs::{FileStore, MemoryStore, Storage};
 use std::fs;
 use std::sync::Arc;
@@ -27,8 +27,8 @@ fn filestore_persists_and_reads() {
 
 #[tokio::test]
 async fn concurrent_tasks_progress_and_storage() {
-    use dagx::DagRunner;
     use dagx::task;
+    use dagx::DagRunner;
     use duraflow_rs::DurableDag;
     use std::sync::atomic::AtomicUsize;
 

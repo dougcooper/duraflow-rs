@@ -1,7 +1,7 @@
-use dagx::{DagRunner, Task, task};
+use dagx::{task, DagRunner, Task};
 use duraflow_rs::{Context, DurableDag, MemoryStore};
-use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 
 // Example tasks
 struct LoadValue(i32);

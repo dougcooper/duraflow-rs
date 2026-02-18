@@ -1,8 +1,8 @@
-use dagx::{Task, task};
+use dagx::{task, Task};
 use duraflow_rs::{Context, Durable, MemoryStore, Storage};
 use parking_lot::Mutex;
-use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 
 // Failing store for tests
 struct FailingStore;
