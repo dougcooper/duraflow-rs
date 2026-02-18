@@ -4,6 +4,11 @@ version = "1.0.0"
 edition = "2021"
 # Minimum supported Rust version (MSRV)
 rust-version = "1.81"
+# Crate metadata (helpful for crates.io and docs.rs)
+description = "Durable, resumable DAG tasks built on top of dagx"
+repository = "https://github.com/dougcooper/duraflow-rs"
+documentation = "https://docs.rs/duraflow-rs"
+homepage = "https://github.com/dougcooper/duraflow-rs"
 
 [dependencies]
 dagx = "0.3.1"

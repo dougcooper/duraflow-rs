@@ -65,10 +65,22 @@ git push origin v1.0.0
 
 The `publish` workflow will run tests and then call `cargo publish` using the `CRATES_IO_TOKEN` secret.
 
+Create & add your crates.io token
+
+1. Create a new API token on https://crates.io/me ("new token").
+2. In GitHub go to **Settings → Secrets** → **Actions** → **New repository secret**.
+   - Name: `CRATES_IO_TOKEN`
+   - Value: the token you copied from crates.io
+3. The `Publish crate` workflow will fail with `please provide a non-empty token` if the secret is not set.
+
+Local publish (alternative)
+
+- Locally you can run `cargo login <token>` once and then `cargo publish` without passing a token on the command line.
+
 MSRV (minimum supported Rust version)
 
-- Declared in `Cargo.toml`: `rust-version = "1.71"`.
-- The CI `msrv` job verifies the crate builds/tests on Rust 1.71.
+- Declared in `Cargo.toml`: `rust-version = "1.81"`.
+- The CI `msrv` job verifies the crate builds/tests on Rust 1.81.
 - If you need to raise/lower the MSRV, update `rust-version` and adjust the CI job accordingly.
 
 Enable local git hooks (pre-commit)
