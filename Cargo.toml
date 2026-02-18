@@ -1,6 +1,6 @@
 [package]
 name = "duraflow-rs"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 rust-version = "1.81"
 description = "Durable, resumable DAG tasks built on top of dagx"
